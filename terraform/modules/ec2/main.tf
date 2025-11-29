@@ -15,7 +15,7 @@ resource "aws_instance" "app" {
 #=====Secruity Group======#
 
 resource "aws_security_group" "ec2_grp1" {
-  name        = "ec2-gp1"
+  name        = "ec2-grp1"
   description = "Allow SSH and HTTP"
   vpc_id      = var.vpc_id
 
@@ -44,3 +44,4 @@ resource "aws_security_group" "ec2_grp1" {
 
   tags = { Name = "ec2-grp1" }
 }
+
