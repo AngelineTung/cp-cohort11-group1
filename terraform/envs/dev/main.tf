@@ -10,3 +10,4 @@ module "ec2" {
   ami_id        = var.ec2_ami_id
   instance_type = var.ec2_instance_type
 }
+
