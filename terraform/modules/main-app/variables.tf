@@ -79,6 +79,13 @@ variable "iot_topic" {
   description = "MQTT topic for simulator publishing"
 }
 
+# ✅ Optional: Use locals for dynamic naming
+# locals {
+#   cert_s3_bucket = "iot-simulator-certs-${var.environment}"
+# }
+
+#============================================================
+
 variable "create_buckets" {
   type    = bool
   default = true
