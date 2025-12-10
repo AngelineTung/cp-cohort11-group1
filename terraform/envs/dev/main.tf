@@ -13,3 +13,9 @@ module "app" {
   # Pass other necessary variables...
   cert_files   = var.cert_files
 }
+
+module "iot_storage" {
+  source      = "../../modules/iot-storage"
+  environment = var.environment
+  tags        = var.tags
+}
