@@ -1,7 +1,3 @@
-Here is the consolidated **Prerequisites, Setup, and Troubleshooting Guide** formatted for your Capstone Project documentation. This includes the critical corrections for handling secrets and the specific troubleshooting steps for the issues you encountered.
-
------
-
 # Capstone Project: Smart IoT Factory Simulator
 
 ## Appendix A: Implementation, Operations & Troubleshooting Guide
