@@ -33,11 +33,14 @@ jobs:
       - name: Terraform fmt (non-blocking)
         run: terraform fmt -check -recursive || true
 
-      - name: Terraform validate (no backend)
+      - name: Terraform init (no backend)
+        working-directory: terraform/envs/dev
+        run: terraform init -backend=false
+
+      - name: Terraform validate
         working-directory: terraform/envs/dev
         run: terraform validate
-
-
+        
   # ===============================
   # CD: DEPLOY DEV (OIDC + APPLY)
   # ===============================
