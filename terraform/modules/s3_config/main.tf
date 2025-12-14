@@ -121,9 +121,10 @@ resource "aws_s3_object" "iot_simulator_script" {
 # Certificates Upload
 ############################################
 resource "aws_s3_object" "certs" {
-  for_each = var.cert_files
-  bucket   = local.cert_bucket
-  key      = each.value
-  source   = "${local.resources_path}/certs/${each.value}"
-  etag     = filemd5("${local.resources_path}/certs/${each.value}")
+  for_each = var.enable_cert_upload ? var.cert_files : {}
+
+  bucket = local.cert_bucket
+  key    = each.value
+  source = "${local.resources_path}/certs/${each.value}"
+  etag   = filemd5("${local.resources_path}/certs/${each.value}")
 }
