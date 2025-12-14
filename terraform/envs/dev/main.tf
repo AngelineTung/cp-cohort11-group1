@@ -54,4 +54,6 @@ module "app" {
 
   enable_cert_upload = var.enable_cert_upload
 
+  enable_grafana_smtp_secret = var.enable_grafana_smtp_secret
+
 }

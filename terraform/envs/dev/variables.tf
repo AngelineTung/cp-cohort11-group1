@@ -88,6 +88,12 @@ variable "enable_cert_upload" {
   default = true
 }
 
+# grafana smtp secret
+variable "enable_grafana_smtp_secret" {
+  type    = bool
+  default = true
+}
+
 # Switches
 variable "create_buckets" {
   type    = bool
