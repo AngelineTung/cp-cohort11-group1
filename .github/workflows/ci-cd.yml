@@ -83,9 +83,10 @@ jobs:
 
       - name: Terraform plan (DEV)
         working-directory: terraform/envs/dev
-        run: terraform plan -no-color \
-          -var="enable_cert_upload=false" \
-          -var="enable_grafana_smtp_secret=false"
+        run: |
+          terraform plan -no-color \
+            -var="enable_cert_upload=false" \
+            -var="enable_grafana_smtp_secret=false"
 
   # ===============================
   # APPLY DEV (push to dev only)
