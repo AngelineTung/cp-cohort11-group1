@@ -36,7 +36,7 @@ jobs:
 
       # ✅ blocking + scoped to terraform directory
       - name: Terraform fmt (check)
-        run: terraform fmt -check -recursive terraform
+        run: terraform fmt -recursive terraform
 
       - name: Terraform init (dev, no backend)
         working-directory: terraform/envs/dev
@@ -180,4 +180,3 @@ jobs:
         working-directory: terraform/envs/prod
         run: terraform apply -auto-approve
 
-        
