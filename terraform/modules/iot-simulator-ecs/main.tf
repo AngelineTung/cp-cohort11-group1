@@ -9,6 +9,17 @@ data "aws_secretsmanager_secret" "grafana_smtp" {
   name  = var.grafana_smtp_secret_name
 }
 
+locals {
+  grafana_smtp_secret_arn = var.enable_grafana_smtp_secret ? data.aws_secretsmanager_secret.grafana_smtp[0].arn : null
+
+  grafana_smtp_secrets = var.enable_grafana_smtp_secret ? [
+    { name = "GF_SMTP_HOST", valueFrom = "${local.grafana_smtp_secret_arn}:SMTP_HOST::" },
+    { name = "GF_SMTP_USER", valueFrom = "${local.grafana_smtp_secret_arn}:SMTP_USER::" },
+    { name = "GF_SMTP_PASSWORD", valueFrom = "${local.grafana_smtp_secret_arn}:SMTP_PASSWORD::" },
+    { name = "GF_SMTP_FROM_ADDRESS", valueFrom = "${local.grafana_smtp_secret_arn}:SMTP_FROM::" },
+    { name = "GF_SMTP_FROM_NAME", valueFrom = "${local.grafana_smtp_secret_arn}:SMTP_NAME::" }
+  ] : []
+}
 
 resource "aws_cloudwatch_log_group" "logs" {
   name              = "/ecs/iot-simulator"
@@ -167,17 +178,13 @@ resource "aws_ecs_task_definition" "main" {
         "--homepath=/usr/share/grafana",
         "--packaging=docker"
       ]
-      secrets = [
-        { name = "GF_SMTP_HOST", valueFrom = "${data.aws_secretsmanager_secret.grafana_smtp.arn}:SMTP_HOST::" },
-        { name = "GF_SMTP_USER", valueFrom = "${data.aws_secretsmanager_secret.grafana_smtp.arn}:SMTP_USER::" },
-        { name = "GF_SMTP_PASSWORD", valueFrom = "${data.aws_secretsmanager_secret.grafana_smtp.arn}:SMTP_PASSWORD::" },
-        { name = "GF_SMTP_FROM_ADDRESS", valueFrom = "${data.aws_secretsmanager_secret.grafana_smtp.arn}:SMTP_FROM::" },
-        { name = "GF_SMTP_FROM_NAME", valueFrom = "${data.aws_secretsmanager_secret.grafana_smtp.arn}:SMTP_NAME::" }
-      ]
+
+      secrets = local.grafana_smtp_secrets
+
       environment = [
         { name = "GF_SECURITY_ADMIN_USER", value = "admin" },
         { name = "GF_SECURITY_ADMIN_PASSWORD", value = "admin" },
-        { name = "GF_SMTP_ENABLED", value = "true" },
+        { name = "GF_SMTP_ENABLED", value = var.enable_grafana_smtp_secret ? "true" : "false" },
         { name = "GF_SMTP_SKIP_VERIFY", value = "true" },
         { name = "GF_SMTP_STARTTLS_POLICY", value = "OpportunisticStartTLS" }
       ]
