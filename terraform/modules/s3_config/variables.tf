@@ -43,8 +43,15 @@ variable "cert_files" {
   description = "Map of certificate and key filenames to upload to S3"
 }
 
-# cert upload
 variable "enable_cert_upload" {
   type    = bool
-  default = true
+  default = false
+}
+
+variable "iot_cert_files" {
+  type = object({
+    root_ca     = string
+    device_cert = string
+    private_key = string
+  })
 }
