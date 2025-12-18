@@ -93,11 +93,7 @@ The application runs as a **single ECS Task** containing four tightly coupled co
 
 - The IoT Simulator container (Python) starts up.  
 - It uses the downloaded certificates to authenticate with AWS IoT Core via **MQTTS (port 8883)**.  
-- It publishes simulated telemetry data (e.g., temperature, vibration) to the topic:
-
-```text
-factory/simulator
-```
+- It publishes simulated telemetry data (e.g., temperature, vibration) to the topic:factory/simulator
 
 ### Step 3: Data Routing (The "Hot" & "Cold" Paths)
 
