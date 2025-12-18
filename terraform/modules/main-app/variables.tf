@@ -129,4 +129,11 @@ variable "iot_cert_files" {
     device_cert = string
     private_key = string
   })
+ 
+ default = {
+    root_ca     = "AmazonRootCA1.pem"
+    device_cert = "device-certificate.pem.crt"
+    private_key = "private.pem.key"
+  }
+
 }
