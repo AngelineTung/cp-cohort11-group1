@@ -113,14 +113,12 @@ variable "s3_bucket_name" {
   type        = string
 }
 
-#cert upload
 variable "enable_cert_upload" {
   type    = bool
-  default = true
+  default = false
 }
 
-# grafana smtp secret
 variable "enable_grafana_smtp_secret" {
   type    = bool
-  default = true
+  default = false
 }
