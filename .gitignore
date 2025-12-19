@@ -38,3 +38,9 @@ override.tf.json
 .terraformrc
 terraform.rc
 grp1-ec2-keypair.pem
+
+# Ignore sensitive SSL private keys
+*.key
+
+# Optionally ignore certs if they contain internal info, though usually public
+*.crt
