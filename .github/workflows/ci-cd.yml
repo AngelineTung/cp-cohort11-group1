@@ -65,13 +65,13 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # 1. Update SMTP Secret (Script)
-      - name: Ensure Grafana SMTP Secret
+      - name: Set Grafana SMTP Secret
         env:
           SMTP_USER: ${{ secrets.GRAFANA_SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: |
-          chmod +x scripts/ensure-grafana-smtp-secret.sh
-          ./scripts/ensure-grafana-smtp-secret.sh
+          chmod +x scripts/set-grafana-smtp-secret.sh
+          ./scripts/set-grafana-smtp-secret.sh
 
       # 2. Inject IoT Certificates & Verify
       - name: Inject IoT Certificates
@@ -219,13 +219,13 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # 1. Update SMTP Secret (Script)
-      - name: Ensure Grafana SMTP Secret
+      - name: Set Grafana SMTP Secret
         env:
           SMTP_USER: ${{ secrets.GRAFANA_SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: |
-          chmod +x scripts/ensure-grafana-smtp-secret.sh
-          ./scripts/ensure-grafana-smtp-secret.sh
+          chmod +x scripts/set-grafana-smtp-secret.sh
+          ./scripts/set-grafana-smtp-secret.sh
 
       # 2. Inject IoT Certificates & Verify
       - name: Inject IoT Certificates
