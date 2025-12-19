@@ -44,9 +44,18 @@ variable "cert_files" {
   default     = {}
 }
 
-# cert upload
 variable "enable_cert_upload" {
   description = "If true, certificates in the resources/certs folder will be uploaded to S3"
   type        = bool
   default     = true
+  type    = bool
+  default = false
+}
+
+variable "iot_cert_files" {
+  type = object({
+    root_ca     = string
+    device_cert = string
+    private_key = string
+  })
 }

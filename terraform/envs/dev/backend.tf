@@ -5,8 +5,8 @@
 
 terraform {
   backend "s3" {
-    bucket         = "grp1-ce11-dev-iot-state-bucket" # <--- UPDATE THIS AFTER 1st RUN to match your variables
-    key            = "grp1-ce11-dev-iot/terraform.tfstate"
+    bucket         = "grp1-ce11-dev-iot-tfstate"
+    key            = "dev/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "grp1-ce11-dev-iot-locks" # <--- UPDATE THIS AFTER 1st RUN
     encrypt        = true
