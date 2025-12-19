@@ -5,6 +5,7 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -24,7 +25,7 @@ jobs:
   # CI: FORMAT + VALIDATE
   # ===============================
   terraform-ci:
-    name: Terraform CI (fmt + validate)
+    name: Terraform CI (fmt + validate) (NO AWS)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -35,7 +36,7 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Terraform fmt
+      - name: Terraform fmt (check)
         run: terraform fmt -check -recursive terraform
 
       - name: Terraform validate (dev & prod)
@@ -46,7 +47,7 @@ jobs:
           terraform -chdir=terraform/envs/prod validate
 
   # ===============================
-  # PLAN DEV
+  # PLAN DEV (AWS OIDC)
   # ===============================
   plan-dev:
     name: Terraform Plan DEV
@@ -63,27 +64,30 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 1. RUN SCRIPT: Push SMTP secrets to AWS (Before Terraform)
-      - name: Set Grafana SMTP Secret
+      # 1. Update SMTP Secret (Script)
+      - name: Ensure Grafana SMTP Secret
         env:
           SMTP_USER: ${{ secrets.GRAFANA_SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: |
-          chmod +x scripts/set-grafana-smtp-secret.sh
-          ./scripts/set-grafana-smtp-secret.sh
+          chmod +x scripts/ensure-grafana-smtp-secret.sh
+          ./scripts/ensure-grafana-smtp-secret.sh
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      # 2. INJECT CERTS (Required for Plan)
+      # 2. Inject IoT Certificates & Verify
       - name: Inject IoT Certificates
         run: |
           mkdir -p terraform/resources/certs
           echo "${{ secrets.TF_VAR_cert_base64_root }}"   | base64 -d > terraform/resources/certs/AmazonRootCA1.pem
           echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
           echo "${{ secrets.TF_VAR_cert_base64_key }}"    | base64 -d > terraform/resources/certs/private.pem.key
+
+          echo "Verifying injected certificates:"
+          ls -l terraform/resources/certs/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init (DEV)
         working-directory: terraform/envs/dev
@@ -92,7 +96,6 @@ jobs:
       - name: Terraform plan (DEV)
         working-directory: terraform/envs/dev
         env:
-          # Map TF_VARs to the same GitHub Secrets if Terraform needs them
           TF_VAR_smtp_host: "smtp.gmail.com:587"
           TF_VAR_smtp_user: ${{ secrets.GRAFANA_SMTP_USER }}
           TF_VAR_smtp_password: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
@@ -101,10 +104,10 @@ jobs:
         run: terraform plan -no-color
 
   # ===============================
-  # APPLY DEV
+  # APPLY DEV (push to dev only)
   # ===============================
   apply-dev:
-    name: Terraform Apply DEV
+    name: Terraform Apply DEV (Infra)
     runs-on: ubuntu-latest
     needs: plan-dev
     if: github.event_name == 'push' && github.ref_name == 'dev'
@@ -128,13 +131,16 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      # 1. INJECT CERTS (Required for Apply)
+      # 1. Inject IoT Certificates & Verify
       - name: Inject IoT Certificates
         run: |
           mkdir -p terraform/resources/certs
           echo "${{ secrets.TF_VAR_cert_base64_root }}"   | base64 -d > terraform/resources/certs/AmazonRootCA1.pem
           echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
           echo "${{ secrets.TF_VAR_cert_base64_key }}"    | base64 -d > terraform/resources/certs/private.pem.key
+
+          echo "Verifying injected certificates:"
+          ls -l terraform/resources/certs/
 
       - name: Terraform init (DEV)
         working-directory: terraform/envs/dev
@@ -150,7 +156,7 @@ jobs:
           TF_VAR_smtp_from_name: "IoT Factory Simulator"
         run: terraform apply -auto-approve
 
-      - name: Export Terraform outputs
+      - name: Export Terraform outputs (DEV)
         id: tf_outputs
         working-directory: terraform/envs/dev
         run: |
@@ -159,10 +165,10 @@ jobs:
           echo "ecs_service_name=$(terraform output -raw ecs_service_name)" >> "$GITHUB_OUTPUT"
 
   # ===============================
-  # DEPLOY DEV (App)
+  # DEPLOY DEV (after infra apply)(App)
   # ===============================
   deploy-dev:
-    name: Deploy DEV (App)
+    name: Deploy DEV ((Build → ECR → ECS)(App)
     runs-on: ubuntu-latest
     needs: apply-dev
     if: github.event_name == 'push' && github.ref_name == 'dev'
@@ -180,14 +186,14 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & push image
+      - name: Build & push image (DEV -> latest)
         env:
           ECR_REPO_URL: ${{ needs.apply-dev.outputs.ecr_repo_url }}
         run: |
           docker build -t "$ECR_REPO_URL:latest" .
           docker push "$ECR_REPO_URL:latest"
 
-      - name: Force new ECS deployment
+      - name: Force new ECS deployment (DEV)
         env:
           CLUSTER: ${{ needs.apply-dev.outputs.ecs_cluster_name }}
           SERVICE: ${{ needs.apply-dev.outputs.ecs_service_name }}
@@ -195,7 +201,7 @@ jobs:
           aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment
 
   # ===============================
-  # PLAN PROD
+  # PLAN PROD (main only)
   # ===============================
   plan-prod:
     name: Terraform Plan PROD
@@ -212,27 +218,30 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 1. RUN SCRIPT: Push SMTP secrets to AWS (Before Terraform)
-      - name: Set Grafana SMTP Secret
+      # 1. Update SMTP Secret (Script)
+      - name: Ensure Grafana SMTP Secret
         env:
           SMTP_USER: ${{ secrets.GRAFANA_SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: |
-          chmod +x scripts/set-grafana-smtp-secret.sh
-          ./scripts/set-grafana-smtp-secret.sh
+          chmod +x scripts/ensure-grafana-smtp-secret.sh
+          ./scripts/ensure-grafana-smtp-secret.sh
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      # 2. INJECT CERTS (Required for Plan)
+      # 2. Inject IoT Certificates & Verify
       - name: Inject IoT Certificates
         run: |
           mkdir -p terraform/resources/certs
           echo "${{ secrets.TF_VAR_cert_base64_root }}"   | base64 -d > terraform/resources/certs/AmazonRootCA1.pem
           echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
           echo "${{ secrets.TF_VAR_cert_base64_key }}"    | base64 -d > terraform/resources/certs/private.pem.key
+
+          echo "Verifying injected certificates:"
+          ls -l terraform/resources/certs/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init (PROD)
         working-directory: terraform/envs/prod
@@ -249,10 +258,10 @@ jobs:
         run: terraform plan -no-color
 
   # ===============================
-  # APPLY PROD
+  # APPLY PROD (push to main only)
   # ===============================
   apply-prod:
-    name: Terraform Apply PROD
+    name: Terraform Apply PROD (Infra)
     runs-on: ubuntu-latest
     needs: plan-prod
     if: github.event_name == 'push' && github.ref_name == 'main'
@@ -276,13 +285,16 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      # 1. INJECT CERTS (Required for Apply)
+      # 1. Inject IoT Certificates & Verify
       - name: Inject IoT Certificates
         run: |
           mkdir -p terraform/resources/certs
           echo "${{ secrets.TF_VAR_cert_base64_root }}"   | base64 -d > terraform/resources/certs/AmazonRootCA1.pem
           echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
           echo "${{ secrets.TF_VAR_cert_base64_key }}"    | base64 -d > terraform/resources/certs/private.pem.key
+
+          echo " Verifying injected certificates:"
+          ls -l terraform/resources/certs/
 
       - name: Terraform init (PROD)
         working-directory: terraform/envs/prod
@@ -307,10 +319,10 @@ jobs:
           echo "ecs_service_name=$(terraform output -raw ecs_service_name)" >> "$GITHUB_OUTPUT"
 
   # ===============================
-  # DEPLOY PROD (App)
+  # DEPLOY PROD (after infra apply)(App)
   # ===============================
   deploy-prod:
-    name: Deploy PROD (App)
+    name: Deploy PROD (Build → ECR → ECS)(App)
     runs-on: ubuntu-latest
     needs: apply-prod
     if: github.event_name == 'push' && github.ref_name == 'main'
@@ -328,7 +340,7 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & push image
+      - name: Build & push image (PROD -> git sha)
         env:
           ECR_REPO_URL: ${{ needs.apply-prod.outputs.ecr_repo_url }}
           IMAGE_TAG: ${{ github.sha }}
@@ -336,7 +348,7 @@ jobs:
           docker build -t "$ECR_REPO_URL:$IMAGE_TAG" .
           docker push "$ECR_REPO_URL:$IMAGE_TAG"
 
-      - name: Force new ECS deployment
+      - name: Force new ECS deployment (PROD)
         env:
           CLUSTER: ${{ needs.apply-prod.outputs.ecs_cluster_name }}
           SERVICE: ${{ needs.apply-prod.outputs.ecs_service_name }}
