@@ -52,10 +52,6 @@ module "app" {
   cert_files     = var.cert_files
   create_buckets = var.create_buckets
 
-  enable_cert_upload = var.enable_cert_upload
-
+  enable_cert_upload         = var.enable_cert_upload
   enable_grafana_smtp_secret = var.enable_grafana_smtp_secret
-
-  iot_cert_files = var.iot_cert_files
-
 }

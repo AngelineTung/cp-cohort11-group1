@@ -114,19 +114,22 @@ variable "s3_bucket_name" {
 }
 
 variable "enable_cert_upload" {
-  type    = bool
-  default = false
+  description = "Switch to enable/disable certificate uploads (passed to s3_config)"
+  type        = bool
+  default     = true
 }
 
+# Also ensure you have the variable for the Grafana secret switch if you are using it
 variable "enable_grafana_smtp_secret" {
-  type    = bool
-  default = false
+  description = "Switch to enable usage of Secrets Manager for Grafana SMTP"
+  type        = bool
+  default     = false
 }
 
-variable "iot_cert_files" {
-  type = object({
-    root_ca     = string
-    device_cert = string
-    private_key = string
-  })
-}
+# variable "iot_cert_files" {
+#   type = object({
+#     root_ca     = string
+#     device_cert = string
+#     private_key = string
+#   })
+# }

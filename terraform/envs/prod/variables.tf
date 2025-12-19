@@ -82,6 +82,19 @@ variable "cert_files" {
   }
 }
 
+# cert upload
+variable "enable_cert_upload" {
+  description = "Switch to enable/disable certificate uploads"
+  type        = bool
+  default     = true
+}
+
+# grafana smtp secret
+variable "enable_grafana_smtp_secret" {
+  type    = bool
+  default = true
+}
+
 # Switches
 variable "create_buckets" {
   type    = bool
@@ -91,14 +104,6 @@ variable "create_buckets" {
 variable "create_backend_resources" {
   type    = bool
   default = true
-}
-
-variable "iot_cert_files" {
-  type = object({
-    root_ca     = string
-    device_cert = string
-    private_key = string
-  })
 }
 
 # variable "config_s3_bucket" {

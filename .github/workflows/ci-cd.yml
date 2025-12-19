@@ -77,6 +77,20 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+      - name: Inject IoT Certificates
+        run: |
+          # 1. Create directory
+          mkdir -p terraform/resources/certs
+
+          # 2. Decode secrets to files
+          echo "${{ secrets.TF_VAR_cert_base64_root }}"   | base64 -d > terraform/resources/certs/AmazonRootCA1.pem
+          echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
+          echo "${{ secrets.TF_VAR_cert_base64_key }}"    | base64 -d > terraform/resources/certs/private.pem.key
+
+          # 3. List directory to verify (Debug)
+          echo "Listing injected certificates:"
+          ls -l terraform/resources/certs/
+
       - name: Terraform init (DEV)
         working-directory: terraform/envs/dev
         run: terraform init -upgrade -reconfigure
@@ -122,6 +136,20 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Inject IoT Certificates
+        run: |
+          # 1. Create directory
+          mkdir -p terraform/resources/certs
+
+          # 2. Decode secrets to files
+          echo "${{ secrets.TF_VAR_cert_base64_root }}"   | base64 -d > terraform/resources/certs/AmazonRootCA1.pem
+          echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
+          echo "${{ secrets.TF_VAR_cert_base64_key }}"    | base64 -d > terraform/resources/certs/private.pem.key
+
+          # 3. List directory to verify (Debug)
+          echo "Listing injected certificates:"
+          ls -l terraform/resources/certs/
 
       - name: Terraform init (DEV)
         working-directory: terraform/envs/dev

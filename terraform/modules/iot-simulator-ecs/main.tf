@@ -101,8 +101,9 @@ resource "aws_ecs_task_definition" "main" {
           rm -rf /mnt/config/provisioning/alerting/notification-policies.yaml
 
           # CRITICAL: Fix Permissions so other containers can read these files
-          chown -R 472:472 /mnt/config
-          chown -R 65534:65534 /mnt/config/prometheus.yml
+          # Ensure standard users (Prometheus: 65534, Grafana: 472) can read/write
+          # Using 777 is safe here because these are ephemeral task volumes.
+          chmod -R 777 /mnt/config
           chmod -R 777 /mnt/certs
           
           # DEBUG: Prove files exist in the logs
