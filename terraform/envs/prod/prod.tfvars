@@ -36,7 +36,7 @@ cert_files = {
 }
 
 create_buckets           = false
-create_backend_resources = false
+create_backend_resources = true
 
 iot_topic      = "factory/plant1/line1"
 s3_bucket_name = "prod-iot-telemetry-storage"
