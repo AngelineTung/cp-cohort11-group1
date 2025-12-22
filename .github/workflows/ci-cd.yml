@@ -1,5 +1,8 @@
 name: Terraform CI/CD (Infra + App Deploy)
 
+# =========================================================
+# 🎯 TRIGGERS
+# =========================================================
 on:
   pull_request:
     branches: [dev, main]
@@ -19,17 +22,16 @@ env:
   AWS_REGION: us-east-1
   TF_IN_AUTOMATION: true
   TERRAFORM_VERSION: "1.9.5"
-
-  # --- BACKEND CONFIG ---
+  # Backend Config
   DEV_BUCKET: "grp1-ce11-dev-iot-tfstate"
   DEV_LOCK_TABLE: "grp1-ce11-dev-iot-locks"
   PROD_BUCKET: "grp1-ce11-prod-iot-tfstate"
   PROD_LOCK_TABLE: "grp1-ce11-prod-iot-locks"
 
 jobs:
-  # ===============================
-  # CI: FORMAT + VALIDATE
-  # ===============================
+  # =========================================================
+  # 🔍 STAGE 1: CI (Format & Validate)
+  # =========================================================
   terraform-ci:
     name: Terraform CI (fmt + validate)
     runs-on: ubuntu-latest
@@ -39,19 +41,20 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Terraform fmt
-        run: terraform fmt -check -recursive terraform
-
-      - name: Terraform validate
+      - name: Terraform Format & Validate
         run: |
-          terraform -chdir=terraform/envs/dev init -backend=false
-          terraform -chdir=terraform/envs/dev validate
-          terraform -chdir=terraform/envs/prod init -backend=false
-          terraform -chdir=terraform/envs/prod validate
+          terraform fmt -check -recursive terraform
 
-  # ===============================
-  # PLAN DEV
-  # ===============================
+          # Validate both environments
+          for env in dev prod; do
+            echo "🔍 Validating $env..."
+            terraform -chdir=terraform/envs/$env init -backend=false
+            terraform -chdir=terraform/envs/$env validate
+          done
+
+  # =========================================================
+  # 📝 STAGE 2: PLAN DEV
+  # =========================================================
   plan-dev:
     name: Terraform Plan DEV
     runs-on: ubuntu-latest
@@ -59,30 +62,21 @@ jobs:
     if: github.event_name == 'pull_request' || github.ref_name == 'dev'
     steps:
       - uses: actions/checkout@v4
-
       - uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CP }}
           aws-region: us-east-1
 
-      # 1. Ensure Resources exist (Script)
-      - name: Ensure Backend Resources (DEV)
-        run: |
-          chmod +x terraform/resources/scripts/ensure-resources.sh
-          ./terraform/resources/scripts/ensure-resources.sh "${{ env.DEV_BUCKET }}" "${{ env.DEV_LOCK_TABLE }}" "${{ env.AWS_REGION }}"
-
-      # 2. Set Grafana SMTP Secret (Script)
-      - name: Set Grafana SMTP Secret
+      # Grouped Setup for cleaner logs
+      - name: 🛠️ Setup Resources & Secrets
         env:
           SMTP_USER: ${{ secrets.GRAFANA_SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: |
-          chmod +x terraform/resources/scripts/set-grafana-smtp-secret.sh
+          chmod +x terraform/resources/scripts/*.sh
+          ./terraform/resources/scripts/ensure-resources.sh "${{ env.DEV_BUCKET }}" "${{ env.DEV_LOCK_TABLE }}" "${{ env.AWS_REGION }}"
           ./terraform/resources/scripts/set-grafana-smtp-secret.sh
 
-      # 3. Inject IoT Certs
-      - name: Inject IoT Certificates
-        run: |
           mkdir -p terraform/resources/certs
           echo "${{ secrets.TF_VAR_cert_base64_root }}"   | base64 -d > terraform/resources/certs/AmazonRootCA1.pem
           echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
@@ -92,22 +86,20 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Terraform init (DEV)
+      - name: Terraform Init (DEV)
         working-directory: terraform/envs/dev
         run: terraform init -upgrade -reconfigure
 
-      # 4. PLAN with dev.tfvars AND Secrets
-      - name: Terraform plan (DEV)
+      - name: Terraform Plan (DEV)
         working-directory: terraform/envs/dev
         env:
-          # Secrets are injected as env vars
           TF_VAR_smtp_user: ${{ secrets.GRAFANA_SMTP_USER }}
           TF_VAR_smtp_password: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: terraform plan -no-color -var-file="dev.tfvars"
 
-  # ===============================
-  # APPLY DEV (SMART IMPORT)
-  # ===============================
+  # =========================================================
+  # 🏗️ STAGE 3: APPLY DEV
+  # =========================================================
   apply-dev:
     name: Terraform Apply DEV
     runs-on: ubuntu-latest
@@ -132,51 +124,42 @@ jobs:
           echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
           echo "${{ secrets.TF_VAR_cert_base64_key }}"    | base64 -d > terraform/resources/certs/private.pem.key
 
-      - name: Terraform init (DEV)
+      - name: Terraform Init (DEV)
         working-directory: terraform/envs/dev
         run: terraform init -upgrade -reconfigure
 
-      # --- 🛡️ FIXED: SMART IMPORT SCRIPT (DEV) ---
-      - name: Fix IAM Conflicts (Smart Import)
+      # --- 🛡️ SELF-HEALING: SMART IMPORT ---
+      - name: Fix IAM/S3 Conflicts (Smart Import)
         working-directory: terraform/envs/dev
         run: |
           chmod +x ../../resources/scripts/tf-smart-import.sh
-          # Get Account ID dynamically
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          # Run Script for 'dev'
           ../../resources/scripts/tf-smart-import.sh dev "$ACCOUNT_ID"
 
-      - name: Terraform apply (DEV)
+      - name: Terraform Apply (DEV)
         working-directory: terraform/envs/dev
         env:
           TF_VAR_smtp_user: ${{ secrets.GRAFANA_SMTP_USER }}
           TF_VAR_smtp_password: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: terraform apply -auto-approve -var-file="dev.tfvars"
 
-      - name: Save Outputs to Artifact
-        id: tf_outputs
+      - name: Save Outputs
         working-directory: terraform/envs/dev
         run: |
-          echo "--- GETTING TERRAFORM OUTPUTS ---"
-          REPO_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || terraform output -raw ecr_repo_url 2>/dev/null || echo "")
-          CLUSTER=$(terraform output -raw ecs_cluster_name)
-          SERVICE=$(terraform output -raw ecs_service_name)
-          APP_URL=$(terraform output -raw app_url 2>/dev/null || echo "N/A")
+          echo "ECR_REPO_URL=$(terraform output -raw ecr_repository_url)" >> deploy.env
+          echo "ECS_CLUSTER=$(terraform output -raw ecs_cluster_name)" >> deploy.env
+          echo "ECS_SERVICE=$(terraform output -raw ecs_service_name)" >> deploy.env
+          echo "ALB_URL=$(terraform output -raw app_url)" >> deploy.env
 
-          echo "ECR_REPO_URL=$REPO_URL" >> deploy.env
-          echo "ECS_CLUSTER=$CLUSTER" >> deploy.env
-          echo "ECS_SERVICE=$SERVICE" >> deploy.env
-          echo "ALB_URL=$APP_URL" >> deploy.env
-
-      - name: Upload Deploy Config
+      - name: Upload Config
         uses: actions/upload-artifact@v4
         with:
           name: dev-deploy-config
           path: terraform/envs/dev/deploy.env
 
-  # ===============================
-  # DEPLOY DEV APP
-  # ===============================
+  # =========================================================
+  # 🚀 STAGE 4: DEPLOY APP (DEV)
+  # =========================================================
   deploy-dev:
     name: Deploy App (DEV)
     runs-on: ubuntu-latest
@@ -188,86 +171,107 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CP }}
           aws-region: us-east-1
-      - uses: aws-actions/amazon-ecr-login@v2
 
-      # 1. Download the Config Artifact
-      - name: Download Deploy Config
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: dev-deploy-config
 
-      # 2. Load Variables
       - name: Load Variables
         run: cat deploy.env >> $GITHUB_ENV
 
-      # 3. Build & Push (FIXED PATH & TAGS)
-      - name: Build & push (DEV)
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          echo "Building for Repo: $ECR_REPO_URL"
-          docker build -t "$ECR_REPO_URL:$IMAGE_TAG" -t "$ECR_REPO_URL:latest" terraform/resources/app
-          docker push "$ECR_REPO_URL:$IMAGE_TAG"
-          docker push "$ECR_REPO_URL:latest"
+      # --- 🚀 SPEED: DOCKER CACHING ---
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push (With Cache)
+        uses: docker/build-push-action@v5
+        with:
+          context: terraform/resources/app
+          push: true
+          tags: |
+            ${{ env.ECR_REPO_URL }}:${{ github.sha }}
+            ${{ env.ECR_REPO_URL }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Force ECS Update
         run: |
-          echo "Updating Service: $ECS_SERVICE in Cluster: $ECS_CLUSTER"
+          echo "Updating Service: $ECS_SERVICE..."
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment
 
-      # 4. Wait & Fetch IP
-      - name: ⏳ Wait for Task to Start
-        run: |
-          echo "Waiting 30s for the new task to provision and get an IP..."
-          sleep 30
-
-      - name: 🔍 Fetch Public IP
+      # --- 🔄 RELIABILITY: RETRY LOOP ---
+      - name: ⏳ Wait & Fetch Public IP
         id: fetch_ip
         run: |
-          TASK_ARN=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --query "taskArns[0]" --output text)
-          if [ "$TASK_ARN" == "None" ] || [ -z "$TASK_ARN" ]; then
-            echo "::warning::No running task found yet."
-            echo "TASK_IP=N/A" >> $GITHUB_ENV
-            exit 0
-          fi
-          ENI_ID=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" --output text)
-          PUBLIC_IP=$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI_ID" --query "NetworkInterfaces[0].Association.PublicIp" --output text)
-          echo "Found Public IP: $PUBLIC_IP"
-          echo "TASK_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          echo "Waiting for a running task to get Public IP..."
+          for i in {1..10}; do
+            TASK_ARN=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --query "taskArns[0]" --output text)
+            
+            if [ "$TASK_ARN" != "None" ] && [ ! -z "$TASK_ARN" ]; then
+               STATUS=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --query "tasks[0].lastStatus" --output text)
+               echo "Attempt $i/10 - Task: $TASK_ARN (Status: $STATUS)"
+               
+               if [ "$STATUS" == "RUNNING" ]; then
+                 ENI_ID=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" --output text)
+                 PUBLIC_IP=$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI_ID" --query "NetworkInterfaces[0].Association.PublicIp" --output text)
+                 
+                 if [ ! -z "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "None" ]; then
+                    echo "✅ Found IP: $PUBLIC_IP"
+                    echo "TASK_IP=$PUBLIC_IP" >> $GITHUB_ENV
+                    exit 0
+                 fi
+               fi
+            else
+               echo "Attempt $i/10 - No task found yet..."
+            fi
+            sleep 30
+          done
+          echo "⚠️ Could not find Public IP after 5 minutes."
+          echo "TASK_IP=N/A" >> $GITHUB_ENV
 
-      # 5. Generate Dashboard (DEV)
-      - name: 📝 Generate Deployment Dashboard
+      # --- 👁️ VISIBILITY: VERBOSE DASHBOARD ---
+      - name: 📝 Generate Verbose Dashboard
         if: always()
-        env:
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "# 🚀 Capstone Deployment Successful!" >> $GITHUB_STEP_SUMMARY
-          echo "### Environment: **DEV**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Access Link | Description |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🏭 **IoT Simulator** | [**Open Application**]($ALB_URL) | Main App (via ALB) |" >> $GITHUB_STEP_SUMMARY
-          if [ "$TASK_IP" != "N/A" ] && [ ! -z "$TASK_IP" ]; then
-             echo "| 📊 **Grafana** | [**Open Grafana**](http://$TASK_IP:3000) | User: \`admin\` |" >> $GITHUB_STEP_SUMMARY
-             echo "| 📈 **Prometheus** | [**Open Prometheus**](http://$TASK_IP:9090) | Metrics Backend |" >> $GITHUB_STEP_SUMMARY
+          echo "# 🚀 Deployment Status (DEV)" >> $GITHUB_STEP_SUMMARY
+
+          echo "| Service | Access Link | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+
+          if [ -z "$ALB_URL" ] || [ "$ALB_URL" == "N/A" ]; then
+             echo "| 🏭 **IoT App** | 🔴 *Missing ALB* | ❌ Terraform Error |" >> $GITHUB_STEP_SUMMARY
           else
-             echo "| ⚠️ **Monitoring** | IP Not Found | Check ECS Console manually |" >> $GITHUB_STEP_SUMMARY
+             echo "| 🏭 **IoT App** | [**Open Application**]($ALB_URL) | ✅ Active |" >> $GITHUB_STEP_SUMMARY
           fi
+
+          if [ "$TASK_IP" == "N/A" ] || [ -z "$TASK_IP" ]; then
+             echo "| 📊 **Grafana** | 🔴 *IP Not Found* | ⚠️ Task Starting/Private |" >> $GITHUB_STEP_SUMMARY
+             echo "| 📈 **Prometheus** | 🔴 *IP Not Found* | ⚠️ Check Console |" >> $GITHUB_STEP_SUMMARY
+          else
+             echo "| 📊 **Grafana** | [**Open Grafana**](http://$TASK_IP:3000) | ✅ User: \`admin\` |" >> $GITHUB_STEP_SUMMARY
+             echo "| 📈 **Prometheus** | [**Open Prometheus**](http://$TASK_IP:9090) | ✅ Metrics Active |" >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
+
+          # 2. Technical Details (Using Shell Variables for consistency)
           echo "### 📦 Technical Details" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Resource | Identifier |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| **ECR Repo** | \`$ECR_REPO_URL\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Docker Image Tag** | \`$IMAGE_TAG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **ECR Repo URL** | \`$ECR_REPO_URL\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Docker Image** | \`$ECR_REPO_URL:latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **ECS Cluster** | \`$ECS_CLUSTER\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **ECS Service** | \`$ECS_SERVICE\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Task Public IP** | \`$TASK_IP\` |" >> $GITHUB_STEP_SUMMARY
 
-  # ===============================
-  # PLAN PROD
-  # ===============================
+  # =========================================================
+  # 📝 STAGE 5: PLAN PROD
+  # =========================================================
   plan-prod:
     name: Terraform Plan PROD
     runs-on: ubuntu-latest
@@ -280,22 +284,15 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CP }}
           aws-region: us-east-1
 
-      # 1. Ensure Resources (PROD)
-      - name: Ensure Backend Resources (PROD)
-        run: |
-          chmod +x terraform/resources/scripts/ensure-resources.sh
-          ./terraform/resources/scripts/ensure-resources.sh "${{ env.PROD_BUCKET }}" "${{ env.PROD_LOCK_TABLE }}" "${{ env.AWS_REGION }}"
-
-      - name: Set Grafana SMTP Secret
+      - name: 🛠️ Setup Resources & Secrets
         env:
           SMTP_USER: ${{ secrets.GRAFANA_SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: |
-          chmod +x terraform/resources/scripts/set-grafana-smtp-secret.sh
+          chmod +x terraform/resources/scripts/*.sh
+          ./terraform/resources/scripts/ensure-resources.sh "${{ env.PROD_BUCKET }}" "${{ env.PROD_LOCK_TABLE }}" "${{ env.AWS_REGION }}"
           ./terraform/resources/scripts/set-grafana-smtp-secret.sh
 
-      - name: Inject IoT Certificates
-        run: |
           mkdir -p terraform/resources/certs
           echo "${{ secrets.TF_VAR_cert_base64_root }}"   | base64 -d > terraform/resources/certs/AmazonRootCA1.pem
           echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
@@ -305,28 +302,26 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Terraform init (PROD)
+      - name: Terraform Init (PROD)
         working-directory: terraform/envs/prod
         run: terraform init -upgrade -reconfigure
 
-      # 4. PLAN
-      - name: Terraform plan (PROD)
+      - name: Terraform Plan (PROD)
         working-directory: terraform/envs/prod
         env:
           TF_VAR_smtp_user: ${{ secrets.GRAFANA_SMTP_USER }}
           TF_VAR_smtp_password: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: terraform plan -no-color -var-file="prod.tfvars"
 
-  # ===============================
-  # APPLY PROD (SMART IMPORT)
-  # ===============================
+  # =========================================================
+  # 🏗️ STAGE 6: APPLY PROD
+  # =========================================================
   apply-prod:
     name: Terraform Apply PROD
     runs-on: ubuntu-latest
     needs: plan-prod
     if: github.event_name == 'push' && github.ref_name == 'main'
     environment: prod
-
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v2
@@ -345,68 +340,42 @@ jobs:
           echo "${{ secrets.TF_VAR_cert_base64_device }}" | base64 -d > terraform/resources/certs/device-certificate.pem.crt
           echo "${{ secrets.TF_VAR_cert_base64_key }}"    | base64 -d > terraform/resources/certs/private.pem.key
 
-      - name: Terraform init (PROD)
+      - name: Terraform Init (PROD)
         working-directory: terraform/envs/prod
         run: terraform init -upgrade -reconfigure
 
-      # --- 🛡️ FIXED: SMART IMPORT SCRIPT (PROD) ---
-      # This handles any IAM roles that might be missing from state in Prod
-      - name: Fix IAM Conflicts (Smart Import)
+      # --- 🛡️ SELF-HEALING: SMART IMPORT (PROD) ---
+      - name: Fix IAM/S3 Conflicts (Smart Import)
         working-directory: terraform/envs/prod
         run: |
           chmod +x ../../resources/scripts/tf-smart-import.sh
-          # Get Account ID dynamically
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          # Run Script for 'prod'
           ../../resources/scripts/tf-smart-import.sh prod "$ACCOUNT_ID"
 
-      # --- KEEPING S3 FIX for now as it handles a specific bucket swap issue ---
-      - name: Fix State Conflicts (S3)
-        working-directory: terraform/envs/prod
-        env:
-          AWS_REGION: us-east-1
-        run: |
-          echo "--- 1. UNTRACK DEV BUCKET ---"
-          terraform state rm module.app.module.iot_storage.aws_s3_bucket.iot_data_bucket || true
-          echo "--- 2. IMPORT PROD BUCKET ---"
-          terraform import module.app.module.iot_storage.aws_s3_bucket.iot_data_bucket prod-iot-telemetry-storage || true
-
-      - name: Terraform apply (PROD)
+      - name: Terraform Apply (PROD)
         working-directory: terraform/envs/prod
         env:
           TF_VAR_smtp_user: ${{ secrets.GRAFANA_SMTP_USER }}
           TF_VAR_smtp_password: ${{ secrets.GRAFANA_SMTP_PASSWORD }}
         run: terraform apply -auto-approve -var-file="prod.tfvars"
 
-      - name: Save Outputs to Artifact
-        id: tf_outputs
+      - name: Save Outputs
         working-directory: terraform/envs/prod
         run: |
-          echo "--- GETTING TERRAFORM OUTPUTS ---"
-          REPO_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || terraform output -raw ecr_repo_url 2>/dev/null || echo "")
-          CLUSTER=$(terraform output -raw ecs_cluster_name)
-          SERVICE=$(terraform output -raw ecs_service_name)
-          APP_URL=$(terraform output -raw app_url 2>/dev/null || echo "N/A")
+          echo "ECR_REPO_URL=$(terraform output -raw ecr_repository_url)" >> deploy.env
+          echo "ECS_CLUSTER=$(terraform output -raw ecs_cluster_name)" >> deploy.env
+          echo "ECS_SERVICE=$(terraform output -raw ecs_service_name)" >> deploy.env
+          echo "ALB_URL=$(terraform output -raw app_url)" >> deploy.env
 
-          if [ -z "$REPO_URL" ]; then
-            echo "::error::ECR URL is empty!"
-            exit 1
-          fi
-
-          echo "ECR_REPO_URL=$REPO_URL" >> deploy.env
-          echo "ECS_CLUSTER=$CLUSTER" >> deploy.env
-          echo "ECS_SERVICE=$SERVICE" >> deploy.env
-          echo "ALB_URL=$APP_URL" >> deploy.env
-
-      - name: Upload Deploy Config
+      - name: Upload Config
         uses: actions/upload-artifact@v4
         with:
           name: prod-deploy-config
           path: terraform/envs/prod/deploy.env
 
-  # ===============================
-  # DEPLOY PROD APP
-  # ===============================
+  # =========================================================
+  # 🚀 STAGE 7: DEPLOY APP (PROD)
+  # =========================================================
   deploy-prod:
     name: Deploy App (PROD)
     runs-on: ubuntu-latest
@@ -418,82 +387,99 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CP }}
           aws-region: us-east-1
-      - uses: aws-actions/amazon-ecr-login@v2
 
-      # 1. Download the Config Artifact
-      - name: Download Deploy Config
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: prod-deploy-config
 
-      # 2. Load Variables
       - name: Load Variables
         run: cat deploy.env >> $GITHUB_ENV
 
-      # 3. Build & Push (FIXED PATH)
-      - name: Build & push (PROD)
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          echo "Building for Repo: $ECR_REPO_URL"
-          docker build -t "$ECR_REPO_URL:$IMAGE_TAG" -t "$ECR_REPO_URL:latest" terraform/resources/app
-          docker push "$ECR_REPO_URL:$IMAGE_TAG"
-          docker push "$ECR_REPO_URL:latest"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push (With Cache)
+        uses: docker/build-push-action@v5
+        with:
+          context: terraform/resources/app
+          push: true
+          tags: |
+            ${{ env.ECR_REPO_URL }}:${{ github.sha }}
+            ${{ env.ECR_REPO_URL }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Force ECS Update
         run: |
-          echo "Updating Service: $ECS_SERVICE in Cluster: $ECS_CLUSTER"
+          echo "Updating Service: $ECS_SERVICE..."
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment
 
-      - name: ⏳ Wait for Task to Start
-        run: |
-          echo "Waiting 30s for the new task to provision and get an IP..."
-          sleep 30
-
-      - name: 🔍 Fetch Public IP
+      # --- 🔄 RELIABILITY: RETRY LOOP ---
+      - name: ⏳ Wait & Fetch Public IP
         id: fetch_ip
         run: |
-          # 1. List the tasks in the service
-          TASK_ARN=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --query "taskArns[0]" --output text)
-          if [ "$TASK_ARN" == "None" ] || [ -z "$TASK_ARN" ]; then
-            echo "::warning::No running task found yet. Links might rely on ALB only."
-            echo "TASK_IP=N/A" >> $GITHUB_ENV
-            exit 0
-          fi
-          # 2. Get the Network Interface ID
-          ENI_ID=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" --output text)
-          # 3. Get the Public IP
-          PUBLIC_IP=$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI_ID" --query "NetworkInterfaces[0].Association.PublicIp" --output text)
-          echo "Found Public IP: $PUBLIC_IP"
-          echo "TASK_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          echo "Waiting for a running task to get Public IP..."
+          for i in {1..10}; do
+            TASK_ARN=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --query "taskArns[0]" --output text)
+            
+            if [ "$TASK_ARN" != "None" ] && [ ! -z "$TASK_ARN" ]; then
+               STATUS=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --query "tasks[0].lastStatus" --output text)
+               echo "Attempt $i/10 - Task: $TASK_ARN (Status: $STATUS)"
+               
+               if [ "$STATUS" == "RUNNING" ]; then
+                 ENI_ID=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" --output text)
+                 PUBLIC_IP=$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI_ID" --query "NetworkInterfaces[0].Association.PublicIp" --output text)
+                 
+                 if [ ! -z "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "None" ]; then
+                    echo "✅ Found IP: $PUBLIC_IP"
+                    echo "TASK_IP=$PUBLIC_IP" >> $GITHUB_ENV
+                    exit 0
+                 fi
+               fi
+            else
+               echo "Attempt $i/10 - No task found yet..."
+            fi
+            sleep 30
+          done
+          echo "⚠️ Could not find Public IP after 5 minutes."
+          echo "TASK_IP=N/A" >> $GITHUB_ENV
 
-      - name: 📝 Generate Deployment Dashboard
+      # --- 👁️ VISIBILITY: VERBOSE DASHBOARD ---
+      - name: 📝 Generate Verbose Dashboard
         if: always()
-        env:
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "# 🚀 Capstone Deployment Successful!" >> $GITHUB_STEP_SUMMARY
-          echo "### Environment: **PROD**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Access Link | Description |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          # 1. IoT Simulator (ALB)
-          echo "| 🏭 **IoT Simulator** | [**Open Application**]($ALB_URL) | Main App (via ALB) |" >> $GITHUB_STEP_SUMMARY
-          # 2. Monitoring (Grafana/Prometheus)
-          if [ "$TASK_IP" != "N/A" ] && [ ! -z "$TASK_IP" ]; then
-            echo "| 📊 **Grafana** | [**Open Grafana**](http://$TASK_IP:3000) | User: \`admin\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| 📈 **Prometheus** | [**Open Prometheus**](http://$TASK_IP:9090) | Metrics Backend |" >> $GITHUB_STEP_SUMMARY
+          echo "# 🚀 Deployment Status (PROD)" >> $GITHUB_STEP_SUMMARY
+
+          echo "| Service | Access Link | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+
+          if [ -z "$ALB_URL" ] || [ "$ALB_URL" == "N/A" ]; then
+             echo "| 🏭 **IoT App** | 🔴 *Missing ALB* | ❌ Terraform Error |" >> $GITHUB_STEP_SUMMARY
           else
-            echo "| ⚠️ **Monitoring** | IP Not Found | Check ECS Console manually |" >> $GITHUB_STEP_SUMMARY
+             echo "| 🏭 **IoT App** | [**Open Application**]($ALB_URL) | ✅ Active |" >> $GITHUB_STEP_SUMMARY
           fi
+
+          if [ "$TASK_IP" == "N/A" ] || [ -z "$TASK_IP" ]; then
+             echo "| 📊 **Grafana** | 🔴 *IP Not Found* | ⚠️ Task Starting/Private |" >> $GITHUB_STEP_SUMMARY
+             echo "| 📈 **Prometheus** | 🔴 *IP Not Found* | ⚠️ Check Console |" >> $GITHUB_STEP_SUMMARY
+          else
+             echo "| 📊 **Grafana** | [**Open Grafana**](http://$TASK_IP:3000) | ✅ User: \`admin\` |" >> $GITHUB_STEP_SUMMARY
+             echo "| 📈 **Prometheus** | [**Open Prometheus**](http://$TASK_IP:9090) | ✅ Metrics Active |" >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
+
+          # 2. Technical Details (Using Shell Variables for consistency)
           echo "### 📦 Technical Details" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Resource | Identifier |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| **ECR Repo** | \`$ECR_REPO_URL\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Docker Image Tag** | \`$IMAGE_TAG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **ECR Repo URL** | \`$ECR_REPO_URL\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Docker Image** | \`$ECR_REPO_URL:latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **ECS Cluster** | \`$ECS_CLUSTER\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **ECS Service** | \`$ECS_SERVICE\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Task Public IP** | \`$TASK_IP\` |" >> $GITHUB_STEP_SUMMARY
