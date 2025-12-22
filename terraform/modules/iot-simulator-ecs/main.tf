@@ -203,8 +203,8 @@ resource "aws_ecs_task_definition" "main" {
 
 resource "aws_lb_target_group" "grafana" {
   # CHANGE 1: Use name_prefix (short) instead of fixed name
-  name_prefix = "graf-"  
-  
+  name_prefix = "graf-"
+
   port        = 3000
   protocol    = "HTTP"
   vpc_id      = var.vpc_id

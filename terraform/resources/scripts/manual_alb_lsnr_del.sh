@@ -1,31 +1,61 @@
-# 1. Get the Load Balancer ARN
-ALB_ARN=$(aws elbv2 describe-load-balancers --names grp1-ce11-dev-iot-alb --query "LoadBalancers[0].LoadBalancerArn" --output text 2>/dev/null)
+# 1. Define Variables
+REGION="us-east-1"
+ALB_NAME="grp1-ce11-dev-iot-alb"
+TG_GRAF="grp1-ce11-dev-iot-graf-tg"
+TG_PROM="grp1-ce11-dev-iot-prom-tg"
 
-if [ "$ALB_ARN" != "None" ] && [ ! -z "$ALB_ARN" ]; then
-  echo "Found ALB: $ALB_ARN"
+echo "--- 🔍 CHECKING REGION: $REGION ---"
+
+# 2. Find the Load Balancer ARN
+ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --region "$REGION" --query "LoadBalancers[0].LoadBalancerArn" --output text 2>/dev/null)
+
+if [ "$ALB_ARN" == "None" ] || [ -z "$ALB_ARN" ]; then
+  echo "⚠️  ALB '$ALB_NAME' NOT found. It might already be deleted."
+else
+  echo "✅ Found ALB: $ALB_ARN"
   
-  # 2. Find and Delete Listeners (The Key Fix)
-  echo "   🔍 Finding Listeners..."
-  LISTENER_ARNS=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --query "Listeners[*].ListenerArn" --output text)
+  # 3. DELETE LISTENERS (This unlocks the Target Groups)
+  echo "   ✂️  Deleting Listeners..."
+  LISTENER_ARNS=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --region "$REGION" --query "Listeners[*].ListenerArn" --output text)
   
   if [ -z "$LISTENER_ARNS" ] || [ "$LISTENER_ARNS" == "None" ]; then
-    echo "   ✅ No listeners found."
+    echo "      No listeners found."
   else
-    for ARN in $LISTENER_ARNS; do
-       echo "   🗑️ Deleting Listener: $ARN"
-       aws elbv2 delete-listener --listener-arn "$ARN"
+    # Handle multiple listeners by converting spaces to newlines
+    echo "$LISTENER_ARNS" | tr '\t' '\n' | while read ARN; do
+       if [ ! -z "$ARN" ]; then
+         echo "      🔥 Deleting: $ARN"
+         aws elbv2 delete-listener --listener-arn "$ARN" --region "$REGION"
+       fi
     done
   fi
 
-  # 3. Delete the ALB
-  echo "   🗑️ Deleting Load Balancer..."
-  aws elbv2 delete-load-balancer --load-balancer-arn "$ALB_ARN"
-  sleep 10
+  # 4. DELETE THE ALB
+  echo "   🗑️  Deleting ALB..."
+  aws elbv2 delete-load-balancer --load-balancer-arn "$ALB_ARN" --region "$REGION"
+  echo "   ⏳ Waiting 15s for AWS to process..."
+  sleep 15
 fi
 
-# 4. Delete the stuck Target Groups
-echo "--- 🧹 CLEANING UP TARGET GROUPS ---"
-aws elbv2 describe-target-groups --names grp1-ce11-dev-iot-graf-tg --query "TargetGroups[0].TargetGroupArn" --output text | xargs -I {} aws elbv2 delete-target-group --target-group-arn {} 2>/dev/null
-aws elbv2 describe-target-groups --names grp1-ce11-dev-iot-prom-tg --query "TargetGroups[0].TargetGroupArn" --output text | xargs -I {} aws elbv2 delete-target-group --target-group-arn {} 2>/dev/null
+# 5. FORCE DELETE TARGET GROUPS
+echo "--- 🧹 CLEANING TARGET GROUPS ---"
 
-echo "✅ DONE. You can re-run the pipeline now."
+# Delete Grafana TG
+TG_ARN_GRAF=$(aws elbv2 describe-target-groups --names "$TG_GRAF" --region "$REGION" --query "TargetGroups[0].TargetGroupArn" --output text 2>/dev/null)
+if [ ! -z "$TG_ARN_GRAF" ] && [ "$TG_ARN_GRAF" != "None" ]; then
+   echo "   🔥 Deleting Grafana TG: $TG_ARN_GRAF"
+   aws elbv2 delete-target-group --target-group-arn "$TG_ARN_GRAF" --region "$REGION"
+else
+   echo "   ✅ Grafana TG already gone."
+fi
+
+# Delete Prometheus TG
+TG_ARN_PROM=$(aws elbv2 describe-target-groups --names "$TG_PROM" --region "$REGION" --query "TargetGroups[0].TargetGroupArn" --output text 2>/dev/null)
+if [ ! -z "$TG_ARN_PROM" ] && [ "$TG_ARN_PROM" != "None" ]; then
+   echo "   🔥 Deleting Prometheus TG: $TG_ARN_PROM"
+   aws elbv2 delete-target-group --target-group-arn "$TG_ARN_PROM" --region "$REGION"
+else
+   echo "   ✅ Prometheus TG already gone."
+fi
+
+echo "✅ DONE. Try re-running the pipeline now."
