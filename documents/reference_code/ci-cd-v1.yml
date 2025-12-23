@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: [dev, main]
   push:
-    branches: [dev, main, test-prod-deployment]
+    branches: [dev, main]
   workflow_dispatch:
 
 permissions:
@@ -276,8 +276,7 @@ jobs:
     name: Terraform Plan PROD
     runs-on: ubuntu-latest
     needs: terraform-ci
-    # MODIFIED: Allow the test branch to run the plan
-    if: github.ref_name == 'main' || github.ref_name == 'test-prod-deployment'
+    if: github.ref_name == 'main'
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v2
@@ -321,8 +320,7 @@ jobs:
     name: Terraform Apply PROD
     runs-on: ubuntu-latest
     needs: plan-prod
-    # MODIFIED: Allow 'push' events from main OR our test branch
-    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'test-prod-deployment')
+    if: github.event_name == 'push' && github.ref_name == 'main'
     environment: prod
     steps:
       - uses: actions/checkout@v4
@@ -382,8 +380,6 @@ jobs:
     name: Deploy App (PROD)
     runs-on: ubuntu-latest
     needs: apply-prod
-    # MODIFIED: Allow deploy from main OR our test branch
-    if: github.ref_name == 'main' || github.ref_name == 'test-prod-deployment'
     environment: prod
     steps:
       - uses: actions/checkout@v4
