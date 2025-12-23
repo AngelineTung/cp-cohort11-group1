@@ -245,6 +245,8 @@ jobs:
           if [ -z "$ALB_URL" ] || [ "$ALB_URL" == "N/A" ]; then
               echo "| 🏭 **IoT Platform** | 🔴 *Missing ALB* | ❌ Terraform Error |" >> $GITHUB_STEP_SUMMARY
           else
+             # IoT App Main Link
+             echo "| 🏭 **IoT App** | [**Open Application**]($ALB_URL) | ✅ Active |" >> $GITHUB_STEP_SUMMARY
               # Check if the Tasks are running (via TASK_IP check)
               if [ "$TASK_IP" == "N/A" ] || [ -z "$TASK_IP" ]; then
                   echo "| 📊 **Grafana** | [**Open via ALB**]($ALB_URL/) | ⚠️ Task Starting... |" >> $GITHUB_STEP_SUMMARY
@@ -464,6 +466,8 @@ jobs:
           if [ -z "$ALB_URL" ] || [ "$ALB_URL" == "N/A" ]; then
              echo "| 🏭 **IoT Platform** | 🔴 *ALB Not Ready* | ❌ Check Terraform Logs |" >> $GITHUB_STEP_SUMMARY
           else
+             # IoT App Main Link
+             echo "| 🏭 **IoT App** | [**Open Application**]($ALB_URL) | ✅ Active |" >> $GITHUB_STEP_SUMMARY
              # 2. Check if the Tasks are actually running (via TASK_IP)
              if [ "$TASK_IP" == "N/A" ] || [ -z "$TASK_IP" ]; then
                 echo "| 📊 **Grafana** | [**Open via ALB**]($ALB_URL/) | ⚠️ Task Starting/Private |" >> $GITHUB_STEP_SUMMARY
