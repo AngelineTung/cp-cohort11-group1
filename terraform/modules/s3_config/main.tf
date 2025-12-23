@@ -76,8 +76,8 @@ resource "aws_s3_object" "certs" {
     var.iot_cert_files.private_key
   ]) : toset([])
 
-  bucket = aws_s3_bucket.config.bucket
-  key    = "certs/${each.value}"
+  # bucket = aws_s3_bucket.config.bucket
+  # key    = "certs/${each.value}"
 
   bucket = local.cert_bucket_id
   key    = each.value
