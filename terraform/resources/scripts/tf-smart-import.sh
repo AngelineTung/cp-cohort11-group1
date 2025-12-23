@@ -25,7 +25,9 @@ import_if_exists() {
         echo "⚪ Resource not found in AWS (Terraform will create): $TF_ADDR"
     else
         echo "📥 Importing existing resource: $AWS_ID"
-        terraform import "$TF_ADDR" "$AWS_ID" || echo "⚠️ Import failed (Terraform will attempt creation)"
+        
+        # 🟢 ADD THE -var-file FLAG HERE 🟢
+        terraform import -var-file="${ENV}.tfvars" "$TF_ADDR" "$AWS_ID" || echo "⚠️ Import failed"
     fi
   fi
 }
